@@ -74,15 +74,6 @@ void Error_Handler(void);
 #define rc_ch4_Pin GPIO_PIN_15
 #define rc_ch4_GPIO_Port GPIOB
 #define rc_ch4_EXTI_IRQn EXTI15_10_IRQn
-#define rc_ch5_Pin GPIO_PIN_8
-#define rc_ch5_GPIO_Port GPIOA
-#define rc_ch5_EXTI_IRQn EXTI9_5_IRQn
-#define rc_ch6_Pin GPIO_PIN_9
-#define rc_ch6_GPIO_Port GPIOA
-#define rc_ch6_EXTI_IRQn EXTI9_5_IRQn
-#define rc_ch7_Pin GPIO_PIN_10
-#define rc_ch7_GPIO_Port GPIOA
-#define rc_ch7_EXTI_IRQn EXTI15_10_IRQn
 #define rc_ch8_Pin GPIO_PIN_3
 #define rc_ch8_GPIO_Port GPIOB
 #define rc_ch8_EXTI_IRQn EXTI3_IRQn

@@ -46,6 +46,7 @@
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
 
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
@@ -65,6 +66,25 @@ unsigned int camera_timeout_val=49, usb_transmit_timeout_val=99; //20 Hz camera 
 int usb_transmit_counter = 0;
 int camera_sync_pulse_counter = 0;
 enum{MOOD_50HZ,MOOD_40HZ,MOOD_20HZ};
+volatile int32_t encoder_index = 0;
+int32_t encoder_reading = 0;
+
+	struct DPL{
+	int8_t h1;
+	int8_t h2;
+	int8_t h3;
+	int8_t h4;
+	struct mpuSensorData Data;
+	uint32_t cameraTimeStamp;
+	uint32_t imuTimeStamp;
+	int32_t stepCounter;
+	uint32_t RC_CMD[8];
+};
+union{
+	struct DPL Data;
+	uint8_t buffer[24+8 +4+32]; // 8 is added to acount for the Time stamps
+	}USB_Packet;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -73,11 +93,17 @@ static void MX_GPIO_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
-unsigned long int getMicros(void)
+unsigned int getMicros(void)
 {
-	return tim4_index*1000+(unsigned long int)TIM4->CNT;
+	return tim4_index*1000+(unsigned int)TIM4->CNT;
+}
+int32_t readEncoder(void)
+{
+	return encoder_index*65000+ (int32_t) TIM1->CNT;
+
 }
 /* USER CODE END PFP */
 
@@ -105,21 +131,7 @@ int main(void)
 	char outdata[100];
 	struct mpuSensorData sensorData;
 	
-	struct DPL{
-	int8_t h1;
-	int8_t h2;
-	int8_t h3;
-	int8_t h4;
-	struct mpuSensorData Data;
-	int64_t cameraTimeStamp;
-	int64_t imuTimeStamp;
-	int32_t stepCounter;
-	uint32_t RC_CMD[8];
-};
-union{
-	struct DPL Data;
-	uint8_t buffer[24+16 +4+32]; // 16 is added to acount for the Time stamps
-	}USB_Packet;
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -144,6 +156,7 @@ union{
   MX_USB_DEVICE_Init();
   MX_TIM4_Init();
   MX_TIM3_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 	NSS_HIGH;
 	uint8_t data=00;
@@ -151,6 +164,8 @@ union{
 	HAL_Delay(10);
 	HAL_TIM_Base_Start_IT(&htim4);
 	HAL_TIM_Base_Start_IT(&htim3);
+	HAL_TIM_Base_Start_IT(&htim1);
+	encoder_index =0;
 	mpuBegin();
 	uint8_t mood=(HAL_GPIO_ReadPin(MOOD1_GPIO_Port,MOOD1_Pin)<<1)|
 							 (HAL_GPIO_ReadPin(MOOD0_GPIO_Port,MOOD0_Pin));
@@ -175,6 +190,7 @@ union{
 
 		if(newDataFlag)
 			{
+			encoder_reading = readEncoder();
 		  unsigned long long ts=getMicros();
 			newDataFlag=0;
 			mpuReadSensor(&sensorData);
@@ -200,7 +216,7 @@ union{
 				USB_Packet.Data.Data=sensorData;
 				memcpy((uint32_t *)USB_Packet.Data.RC_CMD,rc_dt,32);
 				USB_Packet.Data.imuTimeStamp=ts;
-				USB_Packet.Data.stepCounter=step_counter;
+				USB_Packet.Data.stepCounter=encoder_reading;
 				CDC_Transmit_FS(USB_Packet.buffer,sizeof(USB_Packet.buffer));
 				//Updating the stepper cmd
 				motor_cmd=((float)rc_dt[3]-1500)*5000/500;
@@ -293,6 +309,56 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 64999;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
 
 }
 
@@ -450,12 +516,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : rc_ch5_Pin rc_ch6_Pin rc_ch7_Pin */
-  GPIO_InitStruct.Pin = rc_ch5_Pin|rc_ch6_Pin|rc_ch7_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /*Configure GPIO pin : cam_trigg_Pin */
   GPIO_InitStruct.Pin = cam_trigg_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
@@ -478,9 +538,6 @@ static void MX_GPIO_Init(void)
 
   HAL_NVIC_SetPriority(EXTI4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI4_IRQn);
-
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
@@ -541,43 +598,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 			else
 			{
 				rc_tmp_ts[3]=getMicros();
-			}
-			break;
-		case rc_ch5_Pin:
-			interrupt_num=5;
-		  if (HAL_GPIO_ReadPin(rc_ch5_GPIO_Port,rc_ch5_Pin)==GPIO_PIN_RESET)
-			{
-				tmp=getMicros()-rc_tmp_ts[4];
-				if ((tmp<2050)&&(tmp>950))
-					rc_dt[4]=tmp;
-			}
-			else
-			{
-				rc_tmp_ts[4]=getMicros();
-			}
-			break;
-		case rc_ch6_Pin:
-	    if (HAL_GPIO_ReadPin(rc_ch6_GPIO_Port,rc_ch6_Pin)==GPIO_PIN_RESET)
-			{
-				tmp=getMicros()-rc_tmp_ts[5];
-				if ((tmp<2050)&&(tmp>950))
-					rc_dt[5]=tmp;
-			}
-			else
-			{
-				rc_tmp_ts[5]=getMicros();
-			}
-			break;
-		case rc_ch7_Pin:
-		  if (HAL_GPIO_ReadPin(rc_ch7_GPIO_Port,rc_ch7_Pin)==GPIO_PIN_RESET)
-			{
-				tmp=getMicros()-rc_tmp_ts[6];
-				if ((tmp<2050)&&(tmp>950))
-					rc_dt[6]=tmp;			
-			}
-			else
-			{
-				rc_tmp_ts[6]=getMicros();
 			}
 			break;
 		case rc_ch8_Pin:
